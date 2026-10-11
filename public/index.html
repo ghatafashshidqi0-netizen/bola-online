@@ -1,1 +1,161 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strikers Online 2D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { background: #0f172a; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen">
+
+    <!-- MENU UTAMA -->
+    <div id="menu-screen" class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-96 text-center border border-slate-700">
+        <h1 class="text-3xl font-extrabold mb-6 text-emerald-400 tracking-wider">⚽ STRIKER ARENA</h1>
+        <div class="space-y-4">
+            <input id="room-name-input" type="text" placeholder="Nama Room..." class="w-full px-4 py-3 rounded-xl bg-slate-900 border border-slate-700 focus:outline-none focus:border-emerald-500 text-white">
+            <button onclick="createRoom()" class="w-full py-3 bg-emerald-500 hover:bg-emerald-600 font-bold rounded-xl transition shadow-lg shadow-emerald-500/30">Buat Room</button>
+            <hr class="border-slate-700 my-4">
+            <h2 class="text-lg font-semibold text-slate-300">Daftar Room Tersedia</h2>
+            <div id="room-list" class="space-y-2 max-h-40 overflow-y-auto text-left">
+                <!-- Daftar room akan muncul disini -->
+            </div>
+        </div>
+    </div>
+
+    <!-- ROOM / LOBBY SCREEN -->
+    <div id="game-screen" class="hidden flex flex-col items-center">
+        <div class="flex justify-between w-[800px] mb-4 bg-slate-800 px-6 py-3 rounded-xl border border-slate-700 items-center">
+            <div class="text-lg font-bold text-rose-500">Team A: <span id="score-a">0</span></div>
+            <div id="room-info" class="text-sm text-slate-400">Room: -</div>
+            <div class="text-lg font-bold text-blue-500">Team B: <span id="score-b">0</span></div>
+        </div>
+        <canvas id="gameCanvas" width="800" height="600" class="bg-emerald-700 rounded-2xl shadow-2xl border-4 border-slate-700"></canvas>
+        <p class="mt-3 text-slate-400 text-sm">Gunakan tombol **W, A, S, D** atau **Arrow Keys** untuk menggerakkan karakter.</p>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentRoomId = null;
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let gameState = null;
+        let keys = {};
+
+        function createRoom() {
+            const name = document.getElementById('room-name-input').value || "Room Mabar";
+            socket.emit('create-room', name);
+        }
+
+        function joinRoom(roomId) {
+            socket.emit('join-room', roomId);
+        }
+
+        socket.on('room-created', (roomId) => {
+            enterGame(roomId);
+        });
+
+        socket.on('joined-room', (roomId) => {
+            enterGame(roomId);
+        });
+
+        function enterGame(roomId) {
+            currentRoomId = roomId;
+            document.getElementById('menu-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            document.getElementById('room-info').innerText = `Room ID: ${roomId}`;
+        }
+
+        socket.on('room-list', (rooms) => {
+            const listDiv = document.getElementById('room-list');
+            listDiv.innerHTML = '';
+            if (rooms.length === 0) {
+                listDiv.innerHTML = '<p class="text-slate-500 text-sm">Belum ada room aktif.</p>';
+                return;
+            }
+            rooms.forEach(r => {
+                listDiv.innerHTML += `
+                    <div class="flex justify-between items-center bg-slate-900 p-2 rounded-lg">
+                        <span class="text-sm font-medium">${r.name} (${r.players}/4)</span>
+                        <button onclick="joinRoom('${r.id}')" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-xs font-bold rounded-lg transition">Gabung</button>
+                    </div>
+                `;
+            });
+        });
+
+        socket.on('update-game', (state) => {
+            gameState = state;
+        });
+
+        // Input Keyboard
+        window.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+
+        function updatePlayerPosition() {
+            if (!currentRoomId || !gameState || !gameState.players[socket.id]) return;
+            let p = gameState.players[socket.id];
+            let speed = 4;
+            if (keys['w'] || keys['arrowup']) p.y -= speed;
+            if (keys['s'] || keys['arrowdown']) p.y += speed;
+            if (keys['a'] || keys['arrowleft']) p.x -= speed;
+            if (keys['d'] || keys['arrowright']) p.x += speed;
+
+            socket.emit('player-move', { roomId: currentRoomId, x: p.x, y: p.y });
+        }
+
+        // Render Game Loop Client
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Lapangan Sepak Bola (Garis & Gawang)
+            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(40, 40, 720, 520);
+            ctx.beginPath();
+            ctx.moveTo(400, 40); ctx.lineTo(400, 560);
+            ctx.stroke();
+
+            // Gawang Kiri & Kanan
+            ctx.strokeRect(20, 220, 20, 160);
+            ctx.strokeRect(760, 220, 20, 160);
+
+            if (gameState) {
+                // Update Skor
+                document.getElementById('score-a').innerText = gameState.score.teamA;
+                document.getElementById('score-b').innerText = gameState.score.teamB;
+
+                // Gambar Bola
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(gameState.ball.x, gameState.ball.y, gameState.ball.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.closePath();
+
+                // Gambar Pemain
+                for (let id in gameState.players) {
+                    let player = gameState.players[id];
+                    ctx.fillStyle = player.color;
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, 15, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = '#fff';
+                    ctx.stroke();
+                    ctx.closePath();
+                }
+            }
+
+            updatePlayerPosition();
+            requestAnimationFrame(draw);
+        }
+
+        requestAnimationFrame(draw);
+        socket.emit('get-rooms');
+    </script>
+</body>
+</html>
 
